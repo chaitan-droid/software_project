@@ -55,7 +55,7 @@ def page(req, title, body, status=200):
 @app.exception_handler(HTTPException)
 async def problem(req, exc):
     if exc.status_code == 401:
-        return go("/login")
+        return go("/admin/login" if req.url.path.startswith("/admin") else "/login")
     return page(req, "Request could not be completed", f'<p>{e(exc.detail)}</p><a href="/">Browse resources</a>', exc.status_code)
 
 
@@ -103,17 +103,25 @@ def cats(db):
 
 @app.get("/login")
 @app.get("/register")
+@app.get("/admin/login")
 def credentials(req: Request):
     registering = req.url.path == "/register"
     title = "Create student account" if registering else "Student login"
+    if req.url.path == "/admin/login":
+        title = "Administrator login"
     body = field("Display name", "name") if registering else ""
     body += field("Email", "email", "email") + field("Password (8 or more characters)" if registering else "Password", "password", "password")
     link = '<a href="/login">Log in</a>' if registering else '<a href="/register">Create a student account</a>'
+    if req.url.path == "/admin/login":
+        link = '<a href="/login">Student login</a>'
+    elif not registering:
+        link += ' · <a href="/admin/login">Administrator login</a>'
     return page(req, title, '<section>' + form(req.url.path, req.state.csrf, body, title) + link + '</section>')
 
 
 @app.post("/register")
 @app.post("/login")
+@app.post("/admin/login")
 async def authenticate(req: Request):
     data = await submitted(req)
     email = string(data, "email", 254).lower()
@@ -130,12 +138,12 @@ async def authenticate(req: Request):
             except sqlite3.IntegrityError:
                 raise HTTPException(400, "An account already uses this email.")
         account = db.execute("SELECT * FROM users WHERE email=? AND active=1", (email,)).fetchone()
-        if not account or not matches(pw, account["password"]):
-            return page(req, "Login unsuccessful", '<p>Check your email and password or contact your administrator.</p><a href="/login">Try again</a>', 403)
+        if not account or not matches(pw, account["password"]) or (req.url.path == "/admin/login" and not account["admin"]):
+            return page(req, "Login unsuccessful", f'<p>Check your credentials and account access.</p><a href="{req.url.path}">Try again</a>' , 403)
         token = secrets.token_urlsafe(32)
         db.execute("DELETE FROM sessions WHERE expires<=? OR token=?", (time.time(), fingerprint(req.cookies.get("campus_session", ""))))
         db.execute("INSERT INTO sessions VALUES(?,?,?)", (fingerprint(token), account["id"], int(time.time()) + 86400))
-    response = go("/")
+    response = go("/admin" if req.url.path == "/admin/login" else "/")
     response.set_cookie("campus_session", token, max_age=86400, httponly=True, samesite="lax", secure=SECURE)
     return response
 
