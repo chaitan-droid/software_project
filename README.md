@@ -2,6 +2,24 @@
 
 A Python web application for sharing permitted study materials among students. FastAPI handles HTTP requests, Python renders the responsive browser pages, and SQLite stores accounts, resource metadata, files, and moderation history together.
 
+## Try the populated demo on Windows
+
+Download and extract the GitHub ZIP, or clone this repository. Open the folder containing `demo.py` in VS Code. With the dependencies installed in your project environment, run:
+
+```powershell
+.\.venv\Scripts\python.exe demo.py
+```
+
+| Role | Login page | Email | Local demo password |
+| --- | --- | --- | --- |
+| Administrator | http://127.0.0.1:8000/admin/login | admin@campus.example | CampusAdmin42! |
+| Student | http://127.0.0.1:8000/login | student@campus.example | CampusStudent42! |
+| Contributor | http://127.0.0.1:8000/login | owner@campus.example | CampusOwner42! |
+
+The demo includes ten original academic TXT files. Nine are available in the catalog and one awaits moderation. As a student, open **Saved** to see two bookmarks. As the contributor, open **Account → Incoming download requests** to approve the round-robin lab request. As the administrator, inspect the reported sampling worksheet and decide whether to restore or remove it. The dashboard also provides category management, student access controls, usage counts and an activity history.
+
+The local-only launcher stores demo changes in `data/local-demo.sqlite3` and preserves them when restarted. The regular application uses its own database and accounts. Stop the server with Ctrl+C before switching between them.
+
 ## Run in VS Code on Windows
 
 Install Python 3.12 and Git. Open a PowerShell terminal:
@@ -28,7 +46,7 @@ Open http://127.0.0.1:8000 and choose **Create a student account**. On Linux or 
    .\.venv\Scripts\python.exe backend.py moderator@example.org
    ```
 
-   Refresh the moderator's page and open **Admin**. Review the file, restore or remove it, rename categories, manage student access, and inspect usage totals and recent activity. Administrative access is granted locally. There is no seeded administrator password.
+   Refresh the moderator's page and open **Admin**. Review the file, restore or remove it, rename categories, manage student access, and inspect usage totals and recent activity. Administrative access is granted locally. The regular application creates no demo accounts.
 
 ## Project files
 
