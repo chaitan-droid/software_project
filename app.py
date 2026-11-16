@@ -49,7 +49,7 @@ async def context(req, call_next):
 
 def page(req, title, body, status=200):
     return HTMLResponse(layout(title, body, req.state.user, req.state.csrf,
-                               req.query_params.get("notice", "")), status)
+                               req.query_params.get("notice", ""), req.url.path), status)
 
 
 @app.exception_handler(HTTPException)
@@ -171,7 +171,8 @@ def listing(req: Request):
     if q.get("q"):
         clauses.append("(" + " OR ".join(f"instr(lower(r.{k}),lower(?))>0" for k in ("title","subject","tags","description","course")) + ")")
         args.extend([q["q"]] * 5)
-    filters = field("Search title, subject or tags", "q", value=q.get("q",""), required=False)
+    search = field("Search title, subject or tags", "q", value=q.get("q",""), required=False)
+    filters = ""
     with database() as db:
         for key, label, options in [
             ("subject","Subject",[(r[0],r[0]) for r in db.execute("SELECT DISTINCT subject FROM resources WHERE status='Available' ORDER BY subject")]),
@@ -185,8 +186,14 @@ def listing(req: Request):
         filters += select("Sort by","sort",[("new","Newest"),("title","Title"),("downloads","Most downloaded")],q.get("sort","new"))
         order = {"title":"r.title COLLATE NOCASE, r.id", "downloads":"r.downloads DESC, r.id DESC"}.get(q.get("sort"),"r.id DESC")
         index = number(q,"page",1,1000000) if q.get("page") else 1
-        rows = db.execute(BASE + " WHERE " + " AND ".join(clauses) + " ORDER BY " + order + " LIMIT 25 OFFSET ?", (*args,(index-1)*24)).fetchall()
-    body = '<form><div class="grid">'+filters+'</div><button>Search</button></form><div class="grid">'
+        where = " WHERE " + " AND ".join(clauses)
+        count = db.execute("SELECT count(*) FROM resources r" + where,args).fetchone()[0]
+        rows = db.execute(BASE + where + " ORDER BY " + order + " LIMIT 25 OFFSET ?", (*args,(index-1)*24)).fetchall()
+    expanded = " open" if any(q.get(k) for k in ("subject","course","semester","category","kind","sort")) else ""
+    body = (f'<form class="panel"><div class="search">{search}<button>Search</button></div>'
+            f'<details class="filters"{expanded}><summary>Filters and sorting</summary><div class="grid">{filters}</div>'
+            f'<div class="filter-actions"><button>Apply filters</button><a href="{req.url.path}">Clear all</a></div></details></form>'
+            f'<h2 class="results">{count} {"resource" if count==1 else "resources"}</h2><div class="cards">')
     body += "".join(map(card,rows[:24])) or '<p>No resources match. Try another filter or upload your notes.</p>'
     body += "</div>"
     for show, target, label in [(index>1,index-1,"Previous"),(len(rows)>24,index+1,"Next")]:
@@ -206,7 +213,7 @@ def upload_page(req: Request):
     fields += select("Download access","access",[("open","All registered students"),("restricted","Owner approval required")])
     fields += '<label>Academic file (PDF or UTF-8 TXT, up to 10 MiB)<input type="file" name="file" accept=".pdf,.txt" required></label>'
     fields += '<label><input style="width:auto;display:inline" type="checkbox" name="permission" required> I have permission to share this material.</label>'
-    return page(req,"Upload a resource",form("/upload",req.state.csrf,fields,"Publish resource",True))
+    return page(req,"Upload a resource",'<div class="panel">'+form("/upload",req.state.csrf,fields,"Publish resource",True)+"</div>")
 
 
 @app.post("/upload")
@@ -267,7 +274,7 @@ def detail(req: Request,rid:int):
                 f'<p>{e(r["subject"])} · {e(r["course"])} · Semester {r["semester"]}</p><p>{e(r["description"])}</p>'
                 f'<p>Shared by {e(r["author"])} · {e(r["created"])} UTC</p><p>Tags: {e(r["tags"]) or "None"}</p>')
         if can_download(db,r,who):
-            body += f'<a href="{url}/file">Download {e(r["kind"])}</a>'
+            body += f'<a class="primary" href="{url}/file">Download {e(r["kind"])}</a>'
         elif r["status"]=="Available":
             decision = db.execute("SELECT decision FROM requests WHERE user=? AND resource=?",(who["id"],rid)).fetchone()
             body += f'<p>Access request: {e(decision[0])}</p>' if decision else action("request","","Request download access")
@@ -278,10 +285,11 @@ def detail(req: Request,rid:int):
             body += '<section><h2>Student feedback</h2>'
             for row in db.execute("SELECT u.name,v.stars,v.feedback FROM reviews v JOIN users u ON v.user=u.id WHERE resource=?",(rid,)):
                 body += f'<p><strong>{e(row["name"])} · {row["stars"]}/5</strong> {e(row["feedback"])}</p>'
-            body += action("review",select("Your rating","stars",[(i,i) for i in range(1,6)])+
-                           field("Your feedback","feedback","textarea",required=False),"Save rating")+"</section>"
+            previous = db.execute("SELECT stars,feedback FROM reviews WHERE user=? AND resource=?", (who["id"],rid)).fetchone()
+            body += action("review",select("Your rating","stars",[(i,i) for i in range(1,6)], previous["stars"] if previous else 1)+
+                           field("Your feedback","feedback","textarea",value=previous["feedback"] if previous else "",required=False),"Save rating")+"</section>"
             body += "<details><summary>Report this resource</summary>"+action("report",field("Reason","reason","textarea"),"Send for review")+"</details>"
-        if who["id"]==r["owner"] or who["admin"]:
+        if r["status"]=="Available" and (who["id"]==r["owner"] or who["admin"]):
             for row in db.execute("SELECT u.id,u.name FROM requests a JOIN users u ON a.user=u.id WHERE resource=? AND decision='Pending'",(rid,)):
                 body += action("decide",f'<input type="hidden" name="student" value="{row["id"]}">'+
                     select(f'Download request from {row["name"]}',"decision",[("Approved","Approve"),("Denied","Deny")]),"Save decision")
@@ -295,7 +303,10 @@ def download(req: Request,rid:int):
         r = resource(db,rid,who)
         if not can_download(db,r,who):
             raise HTTPException(403,"Download access is required.")
-        data = db.execute("SELECT data FROM files WHERE resource=?",(rid,)).fetchone()[0]
+        stored = db.execute("SELECT data FROM files WHERE resource=?",(rid,)).fetchone()
+        if stored is None:
+            raise HTTPException(404,"The file is unavailable.")
+        data = stored["data"]
         db.execute("UPDATE resources SET downloads=downloads+1 WHERE id=?",(rid,))
     return Response(data,media_type="application/pdf" if r["kind"]=="PDF" else "text/plain",
                     headers={"Content-Disposition":f'attachment; filename="campusshare-{rid}.{r["kind"].lower()}"'})
@@ -328,8 +339,10 @@ async def interact(req: Request,rid:int,action:str):
             decision = string(d,"decision")
             if decision not in ("Approved","Denied"):
                 raise HTTPException(400,"Choose a valid decision.")
-            db.execute("UPDATE requests SET decision=? WHERE resource=? AND user=? AND decision='Pending'",
-                       (decision,rid,number(d,"student")))
+            changed = db.execute("UPDATE requests SET decision=? WHERE resource=? AND user=? AND decision='Pending'",
+                                 (decision,rid,number(d,"student"))).rowcount
+            if not changed:
+                raise HTTPException(409,"This download request is no longer pending.")
         else:
             raise HTTPException(403,"Action unavailable.")
     return go(f"/r/{rid}","Changes saved.")
@@ -365,7 +378,9 @@ def admin(req: Request):
     with database() as db:
         total, downloads = db.execute("SELECT count(*),coalesce(sum(downloads),0) FROM resources").fetchone()
         students = db.execute("SELECT count(*) FROM users").fetchone()[0]
-        body = f'<p>{students} accounts · {total} uploads · {downloads} downloads</p><section><h2>Reports awaiting review</h2>'
+        stats = "".join(f'<div class="metric"><strong>{value}</strong>{label}</div>'
+                        for value,label in [(students,"Accounts"),(total,"Uploads"),(downloads,"Downloads")])
+        body = f'<div class="metrics">{stats}</div><section><h2>Reports awaiting review</h2>' 
         reports = db.execute("SELECT p.*,r.title FROM reports p JOIN resources r ON r.id=p.resource WHERE resolved=0").fetchall()
         for p in reports:
             body += f'<p><a href="/r/{p["resource"]}">{e(p["title"])}</a> · {e(p["reason"])}</p>'
