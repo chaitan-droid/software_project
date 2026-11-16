@@ -1,24 +1,12 @@
 """Server-rendered Python UI. Escape all user-controlled values at output."""
 from html import escape
+from pathlib import Path
 
 def e(value):
     return escape(str(value), quote=True)
 
 
-STYLE = """
-*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#172a40;font:16px/1.5 system-ui,sans-serif}
-header{background:#142d43;color:white}nav,main{max-width:1050px;margin:auto;padding:18px 24px}
-nav{display:flex;gap:18px;align-items:center;flex-wrap:wrap}nav strong{margin-right:auto;font-size:1.45rem}
-nav a{color:white}a{color:#075e69;text-underline-offset:3px}main{padding-bottom:60px}
-h1{font-size:clamp(2rem,5vw,3rem);letter-spacing:-.045em;margin:24px 0 12px}h2{font-size:1.3rem}
-.card,section{background:white;border:1px solid #cfdae1;border-radius:12px;padding:18px;margin:12px 0}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr));gap:12px}
-label{display:block;margin:8px 0;font-weight:600}input,select,textarea,button{font:inherit}
-input,textarea,select{display:block;width:100%;padding:9px;border:1px solid #8698a4;border-radius:6px}
-textarea{min-height:80px}button{cursor:pointer;border:0;background:#096467;color:white;border-radius:6px;padding:8px 14px}
-form{margin:8px 0}nav form{margin:0}.meta{color:#486172}.notice{background:#dff3ea;padding:12px;border-radius:8px}
-p{overflow-wrap:anywhere}article h2{margin:4px 0}details{margin:14px 0}summary{cursor:pointer;font-weight:600}
-"""
+STYLE = Path(__file__).with_name("campus.css").read_text(encoding="utf-8")
 
 
 def field(label, name, kind="text", value="", required=True):
@@ -42,20 +30,37 @@ def form(action, csrf, body, button, upload=False):
             f'<input type="hidden" name="csrf" value="{e(csrf)}">{body}<button>{e(button)}</button></form>')
 
 
-def layout(title, body, user, csrf, notice=""):
+def layout(title, body, user, csrf, notice="", path=""):
     links = ""
     if user:
-        links = '<a href="/">Browse</a><a href="/upload">Upload</a><a href="/saved">Saved</a><a href="/account">Account</a>'
+        items = [("/", "Library"), ("/saved", "Saved"), ("/upload", "Upload"), ("/account", "Account")]
         if user["admin"]:
-            links += '<a href="/admin">Admin</a>'
+            items.append(("/admin", "Admin"))
+        for url, label in items:
+            current = ' aria-current="page"' if path == url else ""
+            links += f'<a href="{url}"{current}>{label}</a>'
         links += form("/logout", csrf, "", "Log out")
+    descriptions = {
+        "/": "Explore notes, lab manuals and practice papers shared by students.",
+        "/saved": "Revisit the resources you bookmarked.",
+        "/admin": "Review reported materials and manage student access.",
+        "/login": "Sign in to your student library.",
+        "/admin/login": "Sign in to review reports and manage the library.",
+    }
+    intro = f"<p>{descriptions[path]}</p>" if path in descriptions else ""
     note = f'<p class="notice" role="status">{e(notice)}</p>' if notice else ""
-    return (f'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-            f'<title>{e(title)} · CampusShare</title><style>{STYLE}</style><header><nav><strong>CampusShare</strong>{links}</nav></header>'
-            f'<main><h1>{e(title)}</h1>{note}{body}</main></html>')
+    auth = ' class="auth"' if path in ("/login", "/admin/login", "/register") else ""
+    art = '<span class="shelf" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
+    brand = '<a class="brand" href="/"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>CampusShare</a>'
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<title>{e(title)} · CampusShare</title><style>{STYLE}</style></head><body><a class="skip" href="#main">Skip to content</a>'
+            f'<header><nav aria-label="Main navigation">{brand}{links}</nav></header><main id="main"{auth}>'
+            f'<div class="hero"><h1>{e(title)}</h1>{intro}{art}</div>{note}{body}</main></body></html>')
 
 
 def card(r):
-    return (f'<article class="card"><span class="meta">{e(r["category_name"])} · {e(r["kind"])}</span>'
-            f'<h2><a href="/r/{r["id"]}">{e(r["title"])}</a></h2>'
-            f'<p>{e(r["subject"])} · {e(r["course"])} · Semester {r["semester"]}</p></article>')
+    access = "Approval required" if r["restricted"] else "Open download"
+    return (f'<article class="card"><div class="cover t{r["category"] % 5}">{e(r["category_name"])}</div>'
+            f'<div class="card-info"><span class="meta">{e(r["subject"])} · Sem {r["semester"]}</span>'
+            f'<h2><a href="/r/{r["id"]}">{e(r["title"])}</a></h2><p>{e(r["course"])}</p></div>'
+            f'<footer>{e(r["kind"])} · {access}</footer></article>')
