@@ -89,5 +89,35 @@ class CampusShareTests(unittest.TestCase):
                 file_kind("notes.txt",data)
 
 
+class DemoTests(unittest.TestCase):
+    def test_demo_accounts_data_and_restart(self):
+        from demo import seed
+        folder = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.dict(os.environ, CAMPUS_DB=os.path.join(folder, "demo.db")))
+        seed()
+        client = self.enterContext(TestClient(app))
+        self.assertEqual(client.get("/admin").url.path, "/admin/login")
+        def login(role, password, path):
+            client.get(path)
+            return client.post(path, data={"csrf": client.cookies["campus_csrf"],
+                               "email": role+"@campus.example", "password": password})
+        self.assertEqual(login("student","CampusStudent42!","/admin/login").status_code,403)
+        self.assertEqual(login("admin","CampusAdmin42!","/admin/login").url.path,"/admin")
+        self.assertIn("omits the signal bandwidth",client.get("/admin").text)
+        self.assertEqual(login("student","CampusStudent42!","/login").url.path,"/")
+        self.assertIn("CMOS inverter worksheet",client.get("/saved").text)
+        self.assertIn("Pending",client.get("/r/2").text)
+        self.assertEqual(client.get("/r/2/file").status_code,403)
+        self.assertIn(b"truth table",client.get("/r/1/file").content)
+        self.assertNotIn("Sampling theory revision draft",client.get("/").text)
+        with database() as db:
+            db.execute("UPDATE users SET name='Edited' WHERE email='owner@campus.example'")
+        seed()
+        with database() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM files").fetchone()[0],10)
+            self.assertEqual(db.execute("SELECT count(*) FROM users").fetchone()[0],3)
+            self.assertTrue(db.execute("SELECT 1 FROM users WHERE name='Edited'").fetchone())
+
+
 if __name__ == "__main__":
     unittest.main()
