@@ -70,6 +70,27 @@ class CampusShareTests(unittest.TestCase):
         self.post(self.owner,"/r/1/decide",student=2,decision="Approved")
         self.assertEqual(self.student.get("/r/1/file").content,b"Fourier notes")
 
+    def test_saved_feedback_and_stale_decision(self):
+        self.upload(access="restricted")
+        self.post(self.student,"/r/1/review",stars=4,feedback="Keep this comment")
+        detail = self.student.get("/r/1").text
+        self.assertIn('<option value="4" selected>',detail)
+        self.assertIn('>Keep this comment</textarea>',detail)
+        self.post(self.student,"/r/1/request")
+        self.assertEqual(self.post(self.owner,"/r/1/decide",student=2,decision="Denied").status_code,200)
+        self.assertEqual(self.post(self.owner,"/r/1/decide",student=2,decision="Approved").status_code,409)
+        self.assertEqual(self.student.get("/r/1/file").status_code,403)
+
+    def test_missing_file_and_filtered_count(self):
+        self.upload()
+        self.assertIn("1 resource</h2>",self.student.get("/?q=Signals").text)
+        self.assertIn("0 resources</h2>",self.student.get("/?kind=PDF").text)
+        with database() as db:
+            db.execute("DELETE FROM files WHERE resource=1")
+        self.assertEqual(self.student.get("/r/1/file").status_code,404)
+        with database() as db:
+            self.assertEqual(db.execute("SELECT downloads FROM resources WHERE id=1").fetchone()[0],0)
+
     def test_admin_controls(self):
         self.post(self.mod,"/admin/add",name="Worksheets")
         self.assertIn("Worksheets",self.owner.get("/upload").text)
