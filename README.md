@@ -4,7 +4,9 @@ A Python web application for sharing permitted study materials among students. F
 
 ## Try the populated demo on Windows
 
-Download and extract the GitHub ZIP, or clone this repository. Open the folder containing `demo.py` in VS Code. With the dependencies installed in your project environment, run:
+With Python 3.12 installed, extract the GitHub ZIP and double-click **Start-CampusShare.cmd** in the folder containing `demo.py`. The launcher creates a local environment, installs the requirements and starts the demo. Open http://127.0.0.1:8000 when startup completes.
+
+If you already have the project environment set up, you can also run:
 
 ```powershell
 .\.venv\Scripts\python.exe demo.py
